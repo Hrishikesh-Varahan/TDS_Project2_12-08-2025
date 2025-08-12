@@ -8,7 +8,7 @@ if not api_key:
     raise ValueError("AIPIPE_API_KEY environment variable is not set.")
 
 # AI Pipe API configuration
-BASE_URL = "https://aipipe.org/openrouter/v1/chat/completions"
+BASE_URL = os.getenv("AIPIPE_BASE_URL")
 MODEL_NAME = "openai/gpt-4o-mini"
 
 SYSTEM_PROMPT = """
