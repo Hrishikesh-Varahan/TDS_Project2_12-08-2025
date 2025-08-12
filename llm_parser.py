@@ -3,7 +3,7 @@ import json
 import uuid
 import shutil
 import logging
-from fastapi import FastAPI, File, UploadFile, Form
+from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse
 import httpx
 
@@ -12,12 +12,12 @@ import httpx
 # -----------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-API_URL = os.getenv("API_URL", "https://aipipe.org/openrouter/v1/chat/completions")
-API_KEY = os.getenv("AIPIPE_TOKEN")
+API_URL = os.getenv("AI_PIPE_BASE_URL", "https://api.ai-pipe.com/v1/generate")
+API_KEY = os.getenv("AI_PIPE_API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")  # Change to your desired model
 
 if not API_KEY:
-    raise ValueError("Missing API key. Set AIPIPE_TOKEN in Render environment variables.")
+    raise ValueError("Missing API key. Set AI_PIPE_API_KEY in Render environment variables.")
 
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
