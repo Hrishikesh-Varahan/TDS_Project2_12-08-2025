@@ -8,8 +8,8 @@ if not api_key:
     raise ValueError("AIPIPE_API_KEY environment variable is not set.")
 
 # AI Pipe API configuration
-BASE_URL = "https://api.aipipe.ai/v1"  # Replace if AI Pipe has a different base URL
-MODEL_NAME = "gpt-4o-mini"  # Change to the exact AI Pipe model you want to use
+BASE_URL = "https://aipipe.org/openrouter/v1/chat/completions"
+MODEL_NAME = "openai/gpt-4o-mini"
 
 SYSTEM_PROMPT = """
 You are a data extraction and analysis assistant.  
@@ -81,8 +81,11 @@ in metadata also add JSON answer format if present.
 
     # API request to AI Pipe
     response = requests.post(
-        f"{BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
+        BASE_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        },
         json={
             "model": MODEL_NAME,
             "messages": [
@@ -97,76 +100,14 @@ in metadata also add JSON answer format if present.
         raise RuntimeError(f"AI Pipe API error: {response.text}")
 
     result_text = response.json()["choices"][0]["message"]["content"]
-
-    # Ensure uploads folder exists
-    file_path = os.path.join(folder, "metadata.txt")
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    if not os.path.exists(file_path):
-        with open(file_path, "w") as f:
-            f.write("")
-
-    return json.loads(result_text)
+    return result_text
 
 
-SYSTEM_PROMPT2 = """
-You are a data analysis assistant.  
-Your job is to:
-1. Write Python code to solve these questions with provided metadata.
-2. List all Python libraries that need to be installed for the code to run.
-3. Also add code to save the result to "{folder}/result.json" or any filetype you find suitable (eg. save img files like "{folder}/img.png").
-
-Do not include explanations, comments, or extra text outside the JSON.
-"""
-
-async def answer_with_data(question_text, folder="uploads"):
-    metadata_path = os.path.join(folder, "metadata.txt")
-    with open(metadata_path, "r") as file:
-        metadata = file.read()
-
-    user_prompt = f"""
-Question:
-{question_text}
-
-metadata:
-{metadata}
-
-Return a JSON with:
-1. The 'code' field — Python code that answers the question.
-2. The 'libraries' field — list of required pip install packages.
-3. Don't add libraries that came installed with python like "io".
-4. Your output will be executed inside a Python REPL.
-5. Don't add comments
-6. Convert any image/visualisation if present, into base64 PNG and add it to the result.
-
-You must respond **only** in valid JSON with these properties:
-
-  "code": "string — Python scraping code as plain text",
-  "libraries": ["string — names of required libraries"]
-
-lastly follow answer format and save answer of questions in result as JSON file.
-"""
-
-    file_path = os.path.join(folder, "result.json")
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    if not os.path.exists(file_path):
-        with open(file_path, "w") as f:
-            f.write("")
-
-    # API request to AI Pipe
-    response = requests.post(
-        f"{BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": MODEL_NAME,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT2.format(folder=folder)},
-                {"role": "user", "content": user_prompt}
-            ],
-            "temperature": 0
-        }
-    )
-
-    if response.status_code != 200:
-        raise RuntimeError(f"AI Pipe API error: {response.text}")
-
-    return json.loads(response.json()["choices"][0]["message"]["content"])
+# Example usage
+if __name__ == "__main__":
+    import asyncio
+    output = asyncio.run(parse_question_with_llm(
+        "Scrape the latest cricket match scores from ESPN Cricinfo",
+        urls=["https://www.espncricinfo.com/"]
+    ))
+    print(output)
