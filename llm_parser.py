@@ -1,197 +1,143 @@
 import os
-import httpx
 import json
+import uuid
+import shutil
+import logging
+from fastapi import FastAPI, File, UploadFile, Form
+from fastapi.responses import HTMLResponse
+import httpx
 
-timeout = httpx.Timeout(60.0, connect=10.0)  # 60 seconds total timeout, 10s connect
+# -----------------------------
+# Config
+# -----------------------------
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+API_URL = os.getenv("API_URL", "https://aipipe.org/openrouter/v1/chat/completions")
+API_KEY = os.getenv("AIPIPE_TOKEN")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")  # Change to your desired model
 
-
-AIPIPE_TOKEN = os.getenv("AIPIPE_TOKEN")
-API_URL = "https://aipipe.org/openrouter/v1/chat/completions"
-MODEL_NAME = "openai/gpt-4.1"
-#MODEL_NAME = "openai/gpt-4.1-nano"
+if not API_KEY:
+    raise ValueError("Missing API key. Set AIPIPE_TOKEN in Render environment variables.")
 
 HEADERS = {
-    "Content-Type": "application/json",
-    "Authorization": f"Bearer {AIPIPE_TOKEN}"
+    "Authorization": f"Bearer {API_KEY}",
+    "Content-Type": "application/json"
 }
 
-SYSTEM_PROMPT = """
-You are a data extraction and analysis assistant.  
-Your job is to:
-1. Write Python code that scrapes the relevant data needed to answer the user's query.
-2. List all Python libraries that need to be installed for the code to run.
-3. Identify and output the main questions that the user is asking, so they can be answered after the data is scraped.
+# -----------------------------
+# FastAPI app
+# -----------------------------
+app = FastAPI()
 
-You must respond **only** in valid JSON following the given schema:
-{
-  "code": "string — Python scraping code as plain text",
-  "libraries": ["string — names of required libraries"],
-  "questions": ["string — extracted questions"]
-}
-Do not include explanations, comments, or extra text outside the JSON.
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-"""
+# -----------------------------
+# Step 1: LLM call to extract metadata
+# -----------------------------
+async def parse_question_with_llm(file_path: str):
+    system_prompt = (
+        "You are a data analysis assistant. "
+        "Read the uploaded CSV file's name and infer relevant metadata. "
+        "Return JSON only in this format: "
+        '{"columns": ["..."], "data_summary": "..."} '
+        "Do not add explanations or text outside JSON."
+    )
 
-async def parse_question_with_llm(question_text, uploaded_files=None, folder="uploads"):
-    uploaded_files = uploaded_files or []
-
-    user_prompt = f"""
-Question:
-{question_text}
-
-Uploaded files:
-{uploaded_files}
-
-
-You are a data extraction specialist.
-Your task is to generate Python 3 code that loads, scrapes, or reads the data needed to answer the user's question.
-
-1(a). Always store the final dataset in a file as {folder}/data.csv file. And if you need to store other files then also store them in this folder. Lastly, add the path and a brief description about the file in "{folder}/metadata.txt".
-1(b). Create code to collect metadata about the data that you collected from scraping (eg. storing details of df using df.info, df.columns, df.head() etc.) in a "{folder}/metadata.txt" file that will help other model to generate code. Add code for creating any folder that doesn't exist like "{folder}".
-
-
-2. Do not perform any analysis or answer the question. Only write code to collect the data.
-
-3. The code must be self-contained and runnable without manual edits.
-
-4. Use only Python standard libraries plus pandas, numpy, beautifulsoup4, and requests unless otherwise necessary.
-
-5. If the data source is a webpage, download and parse it. If it’s a CSV/Excel, read it directly.
-
-6. Do not explain the code.
-
-7. Output only valid Python code.
-
-8. Just scrap the data don;t do anything fancy.
-
-
-
-Return a JSON with:
-1. The 'code' field — Python code that answers the question.
-2. The 'libraries' field — list of required pip install packages.
-3. Don't add libraries that came installed with python like io.
-4. Your output will be executed inside a Python REPL.
-5. Don't add commments
-
-Only return JSON like:
-{{
-  "code": "<...>",
-  "libraries": ["pandas", "matplotlib"]
-}}
-
-lastly i am saying again don't try to solve these questions.
-in metadata also add JSON answer format if present.
-"""
+    user_prompt = f"The file path is: {file_path}. Please return only valid JSON."
 
     payload = {
         "model": MODEL_NAME,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt}
-        ],
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "code_libraries_questions",
-                "strict": True,
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "code": {"type": "string"},
-                        "libraries": {
-                            "type": "array",
-                            "items": {"type": "string"}
-                        },
-                        "questions": {
-                            "type": "array",
-                            "items": {"type": "string"}
-                        }
-                    },
-                    "required": ["code", "libraries", "questions"],
-                    "additionalProperties": False
-                }
-            }
-}
-
-    }
-
-    # Path to the file
-    file_path = os.path.join(folder, "metadata.txt")
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    if not os.path.exists(file_path):
-        with open(file_path, "w") as f:
-            f.write("")
-
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(API_URL, headers=HEADERS, json=payload)
-        response.raise_for_status()
-        content = response.json()
-        llm_response = content["choices"][0]["message"]["content"]
-        return json.loads(llm_response)
-    
-    
-
-
-
-
-SYSTEM_PROMPT2 = """
-You are a data analysis assistant.  
-Your job is to:
-1. Write Python code to solve these questions with provided metadata.
-2. List all Python libraries that need to be installed for the code to run.
-3. Also add code to save the result to "{folder}/result.json" or any filetype you find suitable (eg. save img files like "{folder}/img.png").
-
-Do not include explanations, comments, or extra text outside the JSON.
-"""
-
-
-async def answer_with_data(question_text, folder="uploads"):
-    metadata_path = os.path.join(folder, "metadata.txt")
-    with open(metadata_path, "r") as file:
-        metadata = file.read()
-
-    user_prompt = f"""
-Question:
-{question_text}
-
-metadata:
-{metadata}
-
-Return a JSON with:
-1. The 'code' field — Python code that answers the question.
-2. The 'libraries' field — list of required pip install packages.
-3. Don't add libraries that came installed with python like "io".
-4. Your output will be executed inside a Python REPL.
-5. Don't add comments
-6. Convert any image/visualisation if present, into base64 PNG and add it to the result.
-
-You must respond **only** in valid JSON with these properties:
-
-  "code": "string — Python scraping code as plain text",
-  "libraries": ["string — names of required libraries"]
-
-lastly follow answer format and save answer of questions in result as JSON file.
-"""
-
-    # Path to the file
-    file_path = os.path.join(folder, "result.json")
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    if not os.path.exists(file_path):
-        with open(file_path, "w") as f:
-            f.write("")
-
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT2},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
     }
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(API_URL, headers=HEADERS, json=payload)
         response.raise_for_status()
         content = response.json()
+
         llm_response = content["choices"][0]["message"]["content"]
-        return llm_response 
+        try:
+            return json.loads(llm_response)
+        except json.JSONDecodeError:
+            logging.error("Invalid JSON from LLM. Raw output: %s", llm_response)
+            raise ValueError("LLM did not return valid JSON")
+
+# -----------------------------
+# Step 2: LLM call to analyze data
+# -----------------------------
+async def answer_with_data(metadata: dict):
+    system_prompt = (
+        "You are a skilled data analyst. "
+        "Using the provided metadata, write a short analysis summary. "
+        "Return JSON only in this format: "
+        '{"insight": "..."}'
+    )
+
+    user_prompt = f"Metadata: {json.dumps(metadata)}"
+
+    payload = {
+        "model": MODEL_NAME,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+    }
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(API_URL, headers=HEADERS, json=payload)
+        response.raise_for_status()
+        content = response.json()
+
+        llm_response = content["choices"][0]["message"]["content"]
+        try:
+            return json.loads(llm_response)
+        except json.JSONDecodeError:
+            logging.error("Invalid JSON from LLM. Raw output: %s", llm_response)
+            raise ValueError("LLM did not return valid JSON")
+
+# -----------------------------
+# Upload route
+# -----------------------------
+@app.post("/api")
+async def upload_file(file: UploadFile = File(...)):
+    # Create unique folder for upload
+    folder_id = str(uuid.uuid4())
+    folder_path = os.path.join(UPLOAD_DIR, folder_id)
+    os.makedirs(folder_path, exist_ok=True)
+
+    file_path = os.path.join(folder_path, file.filename)
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    logging.info(f"Step-1: File uploaded to {file_path}")
+
+    # Step-2: Get metadata from LLM
+    metadata = await parse_question_with_llm(file_path)
+    logging.info(f"Step-2: Metadata: {metadata}")
+
+    # Step-3: Get analysis from LLM
+    analysis = await answer_with_data(metadata)
+    logging.info(f"Step-3: Analysis: {analysis}")
+
+    return {"metadata": metadata, "analysis": analysis}
+
+# -----------------------------
+# Root HTML
+# -----------------------------
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return """
+    <html>
+    <body>
+        <h2>Upload Files to FastAPI</h2>
+        <form action="/api" enctype="multipart/form-data" method="post">
+            <input name="file" type="file">
+            <input type="submit" value="Submit">
+        </form>
+    </body>
+    </html>
+    """
