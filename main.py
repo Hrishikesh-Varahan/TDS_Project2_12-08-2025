@@ -6,8 +6,8 @@ from fastapi import FastAPI, UploadFile, Form
 from typing import Dict
 
 # Environment variables
-AI_PIPE_URL = os.getenv("AI_PIPE_URL", "https://api.ai-pipe.com/v1/generate")
-AI_PIPE_KEY = os.getenv("AI_PIPE_KEY")
+AI_PIPE_URL = os.getenv("AI_PIPE_BASE_URL", "https://api.ai-pipe.com/v1/generate")
+AI_PIPE_KEY = os.getenv("AI_PIPE_API_KEY")
 
 logger = logging.getLogger(__name__)
 
