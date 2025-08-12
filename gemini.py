@@ -1,21 +1,20 @@
 import os
 import json
-import google.generativeai as genai
+import requests
 
-# Get the API key from environment variable
-api_key = os.getenv("GENAI_API_KEY")
-
+# Get AI Pipe API key from environment variable
+api_key = os.getenv("AIPIPE_API_KEY")
 if not api_key:
-    raise ValueError("GENAI_API_KEY environment variable is not set.")
+    raise ValueError("AIPIPE_API_KEY environment variable is not set.")
 
-genai.configure(api_key=api_key)
-
-MODEL_NAME = "gemini-2.5-flash"
+# AI Pipe API configuration
+BASE_URL = "https://api.aipipe.ai/v1"  # Replace if AI Pipe has a different base URL
+MODEL_NAME = "gpt-4o-mini"  # Change to the exact AI Pipe model you want to use
 
 SYSTEM_PROMPT = """
 You are a data extraction and analysis assistant.  
 Your job is to:
-1. Write Python code that scrapes the relevant data needed to answer the user's query.If no url are given and then see "uploads" folder and read the files provided there and give relevent metadata.
+1. Write Python code that scrapes the relevant data needed to answer the user's query. If no URL is given, then see "uploads" folder and read the files provided there and give relevant metadata.
 2. List all Python libraries that need to be installed for your code to run.
 3. Identify and output the main questions that the user is asking, so they can be answered after the data is scraped.
 
@@ -80,23 +79,34 @@ lastly i am saying again don't try to solve these questions.
 in metadata also add JSON answer format if present.
 """
 
-    model = genai.GenerativeModel(MODEL_NAME)
-
-    response = model.generate_content(
-        [SYSTEM_PROMPT, user_prompt],
-        generation_config=genai.types.GenerationConfig(
-            response_mime_type="application/json"
-        )
+    # API request to AI Pipe
+    response = requests.post(
+        f"{BASE_URL}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": MODEL_NAME,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0
+        }
     )
 
-    # Path to the file
+    if response.status_code != 200:
+        raise RuntimeError(f"AI Pipe API error: {response.text}")
+
+    result_text = response.json()["choices"][0]["message"]["content"]
+
+    # Ensure uploads folder exists
     file_path = os.path.join(folder, "metadata.txt")
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     if not os.path.exists(file_path):
         with open(file_path, "w") as f:
             f.write("")
-    
-    return json.loads(response.text)
+
+    return json.loads(result_text)
+
 
 SYSTEM_PROMPT2 = """
 You are a data analysis assistant.  
@@ -136,23 +146,27 @@ You must respond **only** in valid JSON with these properties:
 lastly follow answer format and save answer of questions in result as JSON file.
 """
 
-    # Path to the file
     file_path = os.path.join(folder, "result.json")
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     if not os.path.exists(file_path):
         with open(file_path, "w") as f:
             f.write("")
 
-    model = genai.GenerativeModel(MODEL_NAME)
-
-    # SYSTEM_PROMPT2 needs to be formatted with the folder
-    system_prompt2 = SYSTEM_PROMPT2.format(folder=folder)
-
-    response = model.generate_content(
-        [system_prompt2, user_prompt],
-        generation_config=genai.types.GenerationConfig(
-            response_mime_type="application/json"
-        )
+    # API request to AI Pipe
+    response = requests.post(
+        f"{BASE_URL}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": MODEL_NAME,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT2.format(folder=folder)},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0
+        }
     )
 
-    return json.loads(response.text)
+    if response.status_code != 200:
+        raise RuntimeError(f"AI Pipe API error: {response.text}")
+
+    return json.loads(response.json()["choices"][0]["message"]["content"])
