@@ -1,6 +1,9 @@
 import os
 import json
 import requests
+import asyncio
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
 
 # Get AI Pipe API key from environment variable
 api_key = os.getenv("AIPIPE_API_KEY")
@@ -12,7 +15,7 @@ BASE_URL = os.getenv("AIPIPE_BASE_URL")
 MODEL_NAME = "openai/gpt-4o-mini"
 
 SYSTEM_PROMPT = """
-You are a data extraction and analysis assistant.  
+You are a data extraction and analysis assistant.
 Your job is to:
 1. Write Python code that scrapes the relevant data needed to answer the user's query. If no URL is given, then see "uploads" folder and read the files provided there and give relevant metadata.
 2. List all Python libraries that need to be installed for your code to run.
@@ -79,7 +82,6 @@ lastly i am saying again don't try to solve these questions.
 in metadata also add JSON answer format if present.
 """
 
-    # API request to AI Pipe
     response = requests.post(
         BASE_URL,
         headers={
@@ -103,9 +105,27 @@ in metadata also add JSON answer format if present.
     return result_text
 
 
-# Example usage
+# FastAPI app so Render can run `main:app`
+app = FastAPI()
+
+class ParseRequest(BaseModel):
+    question: str
+    uploaded_files: list[str] = []
+    urls: list[str] = []
+
+@app.post("/parse")
+async def parse_endpoint(req: ParseRequest):
+    try:
+        result = await parse_question_with_llm(
+            req.question, req.uploaded_files, req.urls
+        )
+        return json.loads(result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Example local test
 if __name__ == "__main__":
-    import asyncio
     output = asyncio.run(parse_question_with_llm(
         "Scrape the latest cricket match scores from ESPN Cricinfo",
         urls=["https://www.espncricinfo.com/"]
